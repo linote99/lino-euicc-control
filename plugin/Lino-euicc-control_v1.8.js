@@ -196,20 +196,18 @@
 
   let jqrLoaded = false;
 
-  // ---------- 组件状态同步（参考「插件综合收纳箱」的设备端同步范式）----------
+  // ---------- 组件状态同步（参考《插件综合收纳箱》的设备端同步范式）----------
   /**
-   * 借鉴同目录《插件综合收纳箱(跨端同步版)》的做法，要点：
-   *
-   *   1) 单一数据源 = 设备端文件；localStorage 仅作本地缓存（首屏秒开 + 离线兜底）
-   *   2) 设备端文件用 base64 编解码写入/读取 —— 避免 JSON 里的引号、
-   *      反斜杠、换行在 shell 命令中被解析
-   *   3) 原子写：先写 .tmp 再 mv，避免写一半损坏
-   *   4) 逐键时间戳 + 取设备时间校准 clockOffset —— 多端各改不同项时互不覆盖，
+   * 借鉴同目录《插件综合收纳箱(跨端同步版)》，要点：
+   *   1) 单一数据源 = 设备端文件；localStorage 仅作本地缓存（秒开 + 离线兜底）
+   *   2) 设备端用 base64 编解码 —— 避免 JSON 的引号/反斜杠在 shell 中被解析
+   *   3) 原子写（.tmp + mv）—— 避免写一半损坏
+   *   4) 逐键时间戳 + 用设备时间校准 clockOffset —— 多端各改不同项互不覆盖，
    *      且不受各端本地时钟偏差影响
-   *   5) 拉取后按时间戳合并；合并结果与远端不一致说明本地更新，回推一次即收敛
+   *   5) 拉取后合并；合并结果与远端不一致 => 本地更新，回推一次即收敛
    *
-   * 与收纳箱的差异：本插件只需同步「扫码组件是否安装」这一项事实，
-   * 故文档结构简化，但保留全部同步机制（时间戳/时钟校准/原子写/base64）。
+   * 与收纳箱的差异：本插件只需记录「扫码组件是否安装」，故文档结构更简，
+   * 但完整保留其同步机制。
    */
   const SYNC_DOC_VERSION = 1;
   const DEVICE_DIR  = '/data/lino_euicc_ctl';
@@ -218,14 +216,9 @@
   const ABSENT_MARKER = '__LINO_ABSENT__';
   const LOCAL_CACHE_KEY = 'lino_euicc_scan_state_v1';
 
-  let syncDoc = {
-    v: SYNC_DOC_VERSION,
-    savedAt: 0,
-    // keys: { [组件名]: { installed: bool, size, sha256, source, t: 生效时间戳 } }
-    keys: {},
-  };
-  let clockOffset = 0;              // 设备时间 - 本机时间
-  let syncStatus = 'unknown';       // unknown | ok | absent | unavailable
+  let syncDoc = { v: SYNC_DOC_VERSION, savedAt: 0, keys: {} };
+  let clockOffset = 0;         // 设备时间 - 本机时间
+  let syncStatus = 'unknown';  // unknown | ok | absent | unavailable
   let pushInFlight = false, pushPending = false, pullInFlight = false;
 
   const now = () => Date.now() + clockOffset;
@@ -238,8 +231,7 @@
   };
   const b64decode = (b64) => {
     const bin = atob(String(b64).replace(/\s+/g, ''));
-    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
-    return new TextDecoder().decode(bytes);
+    return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
   };
 
   const emptyDoc = () => ({ v: SYNC_DOC_VERSION, savedAt: 0, keys: {} });
@@ -248,7 +240,7 @@
     const out = emptyDoc();
     if (!d || typeof d !== 'object') return out;
     out.savedAt = Number(d.savedAt) || 0;
-    const src = d.keys && typeof d.keys === 'object' ? d.keys : {};
+    const src = (d.keys && typeof d.keys === 'object') ? d.keys : {};
     Object.keys(src).forEach((k) => {
       const x = src[k];
       if (!x) return;
@@ -263,7 +255,7 @@
     return out;
   };
 
-  /** 逐键时间戳合并：两侧同键时取 t 较大者 */
+  /** 逐键时间戳合并：同键取 t 较大者 */
   const mergeDocs = (a, b) => {
     const out = emptyDoc();
     out.savedAt = Math.max(Number(a.savedAt) || 0, Number(b.savedAt) || 0);
@@ -280,12 +272,9 @@
   };
 
   const docEquals = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-
   const persistLocal = () => {
     try { localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(syncDoc)); } catch (e) {}
   };
-
-  const setSyncStatus = (st) => { syncStatus = st; };
 
   /** 写入设备端（base64 + 原子写） */
   const pushDevice = async () => {
@@ -293,53 +282,44 @@
     pushInFlight = true;
     try {
       const b64 = b64encode(JSON.stringify(syncDoc));
-      const out = await sh(
-        `mkdir -p ${DEVICE_DIR} && printf '%s' '${b64}' | base64 -d > ${DEVICE_TMP} && `
-        + `mv ${DEVICE_TMP} ${DEVICE_FILE} && chmod 666 ${DEVICE_FILE}`, 20000);
-      const okWrite = await sh(`test -s ${DEVICE_FILE} && echo OK || echo NO`, 10000);
-      setSyncStatus((okWrite || '').indexOf('OK') >= 0 ? 'ok' : 'unavailable');
+      await sh(`mkdir -p ${DEVICE_DIR} && printf '%s' '${b64}' | base64 -d > ${DEVICE_TMP}`
+        + ` && mv ${DEVICE_TMP} ${DEVICE_FILE} && chmod 666 ${DEVICE_FILE}`, 20000);
+      const c = await sh(`test -s ${DEVICE_FILE} && echo OK || echo NO`, 10000);
+      syncStatus = (c || '').indexOf('OK') >= 0 ? 'ok' : 'unavailable';
     } finally {
       pushInFlight = false;
       if (pushPending) { pushPending = false; pushDevice(); }
     }
   };
 
-  /**
-   * 从设备端拉取并与本地按时间戳合并。
-   * 顺带读取设备时间以校准 clockOffset，避免多端本地时钟不一致时
-   * 时间戳比较失真（会导致「谁改都不生效」）。
-   */
+  /** 拉取并合并；顺带用设备时间校准 clockOffset */
   const pullDevice = async () => {
     if (pullInFlight) return false;
     pullInFlight = true;
     const t0 = Date.now();
     try {
-      const raw = await sh(
-        `echo "LINO_NOW=$(date +%s)"; `
-        + `test -f ${DEVICE_FILE} && base64 ${DEVICE_FILE} | tr -d '\\n' || echo ${ABSENT_MARKER}`,
-        15000);
+      const raw = await sh(`echo "LINO_NOW=$(date +%s)"; `
+        + `test -f ${DEVICE_FILE} && base64 ${DEVICE_FILE} | tr -d '\\n' || echo ${ABSENT_MARKER}`, 15000);
       const t1 = Date.now();
-      if (!raw) { setSyncStatus('unavailable'); return false; }
+      if (!raw) { syncStatus = 'unavailable'; return false; }
 
       const m = raw.match(/LINO_NOW=(\d+)/);
       if (m) clockOffset = Number(m[1]) * 1000 - Math.round((t0 + t1) / 2);
 
       const body = raw.replace(/LINO_NOW=\d+\s*/, '').trim();
       if (!body || body.indexOf(ABSENT_MARKER) !== -1) {
-        setSyncStatus('absent');
-        await pushDevice();      // 设备端还没有：把本地作为初始值推上去
+        syncStatus = 'absent';
+        await pushDevice();
         return false;
       }
-
       let remote;
       try { remote = normalizeDoc(JSON.parse(b64decode(body))); }
-      catch (e) { setSyncStatus('unavailable'); return false; }
+      catch (e) { syncStatus = 'unavailable'; return false; }
 
       const before = normalizeDoc(syncDoc);
       syncDoc = mergeDocs(syncDoc, remote);
       if (!docEquals(before, syncDoc)) persistLocal();
-      setSyncStatus('ok');
-      // 合并结果与远端不同 => 本地有更新内容，回推一次即收敛
+      syncStatus = 'ok';
       if (!docEquals(syncDoc, remote)) await pushDevice();
       return true;
     } finally {
@@ -347,18 +327,276 @@
     }
   };
 
-  /** 记录组件安装状态（写本地缓存 + 推设备端） */
+  /** 记录组件状态（本地缓存 + 推设备端） */
   const stateMark = async (installed, source, size, sha) => {
     syncDoc.keys['jsQR'] = {
-      installed: !!installed,
-      size: Number(size) || 0,
-      sha256: String(sha || ''),
-      source: String(source || ''),
-      t: now(),
+      installed: !!installed, size: Number(size) || 0,
+      sha256: String(sha || ''), source: String(source || ''), t: now(),
     };
     syncDoc.savedAt = now();
     persistLocal();
     await pushDevice();
+  };
+
+
+  // ---------- 安装状态记录（落盘，便于多端同步与排障）----------
+  /**
+   * 在 /sdcard/ufitools/ 下维护一份状态文件。
+   *
+   * 用途：
+   *   1) 记录组件的安装事实（版本、大小、sha256、来源、时间），
+   *      换端/换浏览器打开时能直接读到状态，不必每次重新探测大文件
+   *   2) 排障依据：能看出「什么时候、从哪个源、装了哪个版本」
+   *
+   * 位置选在 /sdcard/ufitools/ 而非应用私有目录：
+   *   /sdcard 是外部存储，各端与用户都可访问，便于跨端同步与手动检查。
+   * 注意：状态文件只作记录，**组件的真实存在性仍以实际文件为准**
+   *   （用户可能手动删除组件而未更新状态），故渲染时以文件探测结果为准，
+   *   状态文件用于补充「来源/时间」等信息。
+   */
+  const JQR_STATE = '/sdcard/ufitools/euicc-scan.json';
+
+  const stateWrite = async (obj) => {
+    try {
+      const json = JSON.stringify(obj);
+      // 用单引号包裹并转义，避免 JSON 里的双引号被 shell 解析
+      const safe = json.replace(/'/g, "'\\''");
+      await sh(`mkdir -p ${JQR_DIR} && printf '%s' '${safe}' > ${JQR_STATE}`, 15000);
+      return true;
+    } catch (e) { return false; }
+  };
+
+  const stateClear = async () => {
+    await sh(`rm -f ${JQR_STATE}`, 10000);
+  };
+
+  /** 记录一次安装 */
+  const stateMarkInstalled = async (source) => {
+    await stateWrite({
+      component: 'jsQR',
+      version: JQR_VER,
+      size: JQR_SIZE,
+      sha256: JQR_SHA,
+      source: source || '(手动放置)',
+      installedAt: new Date().toISOString(),
+      pluginVersion: PLUGIN_VERSION,
+    });
+  };
+
+
+  /** 组件是否已就位（只读探测，不做网络请求） */
+  /** 组件是否已安装（只看文件存在且大小合理；内容校验由 jqrVerify 负责） */
+  const jqrInstalled = async () => {
+    const r = await sh(`[ -f ${JQR_PATH} ] && wc -c < ${JQR_PATH} || echo 0`, 10000);
+    const n = parseInt((r || '0').trim(), 10);
+    return Number.isFinite(n) && n > 1000;
+  };
+
+  /** 校验已安装组件的 sha256；返回 ok/实际值/期望值 */
+  const jqrVerify = async () => {
+    const r = await sh(`sha256sum ${JQR_PATH} 2>/dev/null | cut -d' ' -f1`, 20000);
+    const got = (r || '').trim().toLowerCase();
+    return { ok: got === JQR_SHA, got, want: JQR_SHA };
+  };
+
+  /**
+   * 把组件内容注入当前页面作用域。
+   * 用 new Function 执行而非 <script src>：后者受页面 CSP 限制，
+   * 且无法在无网络时复用本地已缓存的内容。
+   */
+  const jqrInject = (code) => {
+    try {
+      const f = new Function('self', 'window', 'module', 'exports', code);
+      const stub = { window: null, self: null };
+      stub.window = stub; stub.self = stub;
+      f(stub, stub, undefined, undefined);
+      if (typeof stub.jsQR === 'function') { window.jsQR = stub.jsQR; return true; }
+      if (typeof window.jsQR === 'function') return true;
+      return false;
+    } catch (e) {
+      setLog('扫码组件注入失败: ' + (e && e.message ? e.message : e), true);
+      return false;
+    }
+  };
+
+  /** 读取设备上的组件并注入（不联网） */
+  const jqrLoadLocal = async () => {
+    if (jqrLoaded && typeof window.jsQR === 'function') return true;
+
+    // 必须用 base64 -w 76（带换行的 base64），不能用 -w0。
+    //
+    // 原因：UFI-TOOLS 的 RootShell.sendCommandToSocket() 是逐行读取的
+    //   （Kotlin BufferedReader.readLine()），且对每行调用 KanoLog.d() 打日志。
+    //   若输出是单行 342KB（base64 -w0），该行会被日志/读取链路截断，
+    //   返回的 base64 不完整，解码后注入必然失败。
+    //   改成每行 76 字符后，逐行读取与日志都能正常处理。
+    const r = await sh(`base64 -w 76 ${JQR_PATH} 2>/dev/null`, 40000);
+    const b64 = (r || '').replace(/[^A-Za-z0-9+/=]/g, '');
+    // 完整长度 342516。偏小说明仍被截断（宿主限制），明确报出来而不是静默失败。
+    if (b64.length < 300000) {
+      setLog('扫码组件读取不完整：收到 ' + b64.length + ' 字符（完整应为 342516）。'
+        + '\n请改用「下载扫码组件」按钮获取。', true);
+      return false;
+    }
+    if (b64.length < 1000) return false;
+    let code;
+    try { code = decodeURIComponent(escape(atob(b64))); }
+    catch (e) { try { code = atob(b64); } catch (e2) { return false; } }
+    const ok = jqrInject(code);
+    if (ok) jqrLoaded = true;
+    return ok;
+  };
+
+  /** 下载组件到设备（多源回退 + sha256 校验） */
+  const jqrDownload = async () => {
+    const curl = '/data/data/com.minikano.f50_sms/files/curl';
+    await sh(`mkdir -p ${JQR_DIR}`, 10000);
+    setLog('正在下载扫码组件…', false);
+
+    let lastErr = '';
+    for (const url of JQR_URLS) {
+      const tmp = JQR_PATH + '.part';
+      const r = await sh(
+        `${curl} -s -L --max-time 90 -o ${tmp} -w '%{http_code}' ${url}`, 110000);
+      const code = (r || '').trim().slice(-3);
+      if (code !== '200') { lastErr = `HTTP ${code || '失败'} (${url.split('/')[2]})`; continue; }
+
+      // 校验大小与 sha256
+      const sz = await sh(`wc -c < ${tmp}`, 10000);
+      const n = parseInt((sz || '0').trim(), 10);
+      if (n !== JQR_SIZE) { lastErr = `大小不符 ${n}/${JQR_SIZE}`; await sh(`rm -f ${tmp}`, 8000); continue; }
+      const hv = await sh(`sha256sum ${tmp} | cut -d' ' -f1`, 20000);
+      const got = (hv || '').trim().toLowerCase();
+      if (got !== JQR_SHA) { lastErr = `sha256 不符 ${got.slice(0,12)}…`; await sh(`rm -f ${tmp}`, 8000); continue; }
+
+      await sh(`mv ${tmp} ${JQR_PATH} && chmod 644 ${JQR_PATH}`, 15000);
+      await stateMark(true, url, JQR_SIZE, JQR_SHA);   // 记录安装（本地+设备端同步）
+      await stateMarkInstalled(url);       // 记录安装来源与时间（供多端同步/排障）
+      jqrLoaded = false;
+      const ok = await jqrLoadLocal();
+      setLog(ok ? '扫码组件已下载并加载。' : '组件已下载，但注入失败。', !ok);
+      toast(ok ? '扫码组件已就绪' : '组件注入失败', ok ? 'green' : 'red');
+      return ok;
+    }
+    await sh(`rm -f ${JQR_PATH}.part`, 8000);
+    setLog('扫码组件下载失败：' + lastErr
+      + '\n可手动下载后放入 ' + JQR_PATH, true);
+    toast('下载失败', 'red');
+    return false;
+  };
+
+  /** 卸载组件，释放空间 */
+  const jqrUninstall = async () => {
+    if (!(await jqrInstalled())) { setLog('扫码组件未安装。', false); toast('未安装', 'pink'); return; }
+    const typed = await uiConfirm('确认卸载扫码组件？\n\n'
+      + JQR_PATH + '\n卸载后「扫码」功能将不可用，其余功能不受影响。', '卸载');
+    if (!typed) { setLog('已取消卸载。', false); return; }
+    await sh(`rm -f ${JQR_PATH}`, 15000);
+    await stateMark(false, '', 0, '');
+    await stateClear();
+    jqrLoaded = false;
+    try { delete window.jsQR; } catch (e) { window.jsQR = undefined; }
+    if (await jqrInstalled()) { setLog('卸载失败，请检查文件权限。', true); toast('卸载失败', 'red'); return; }
+    setLog('扫码组件已卸载。', false);
+    toast('已卸载', 'green');
+    renderScanState();
+  };
+
+  /**
+   * 组件检测：把每一步的实测结果直接展示出来。
+   *
+   * 排查「放了文件却用不了」时，需要知道卡在哪一步 —— 是文件不在、
+   * 校验不过、shell 读不到、还是注入失败。逐项报告，不猜。
+   */
+  const jqrDiagnose = async () => {
+    const lines = [];
+    const ok = (b) => b ? '✅' : '❌';
+
+    await pullDevice();
+    lines.push(`${ok(syncStatus === 'ok')} 设备端同步: ${syncStatus}`
+      + (syncStatus === 'ok' ? '（已读取设备状态）'
+        : syncStatus === 'absent' ? '（设备端无记录，已写入）'
+        : '（不可用，仅本地）'));
+    lines.push(`   ${DEVICE_FILE}`);
+    const mt = syncDoc.keys['jsQR'];
+    lines.push(`   记录: ${mt ? ('installed=' + mt.installed + ' size=' + mt.size) : '(无)'}`);
+    lines.push('');
+
+    // 1) 宿主能力：runShellWithRoot 是否存在
+    const hasShell = (typeof runShellWithRoot === 'function');
+    lines.push(`${ok(hasShell)} root shell 可用: ${hasShell ? '是' : '否（请开启高级功能）'}`);
+    if (!hasShell) { setLog(lines.join('\n'), true); return; }
+
+    // 2) 文件是否存在 + 大小
+    const szRaw = await sh(`[ -f ${JQR_PATH} ] && wc -c < ${JQR_PATH} || echo 0`, 15000);
+    const size = parseInt((szRaw || '0').trim(), 10);
+    lines.push(`${ok(size === JQR_SIZE)} 文件存在: ${JQR_PATH}`);
+    lines.push(`   实测大小 ${size} / 期望 ${JQR_SIZE} 字节`);
+
+    // 目录信息（文件不存在时帮助定位路径问题）
+    const lsOut = await sh(`ls -la ${JQR_DIR}/ 2>&1 | head -5`, 15000);
+    lines.push(`   目录内容: ${(lsOut || '(空)').replace(/\n/g, ' | ')}`);
+
+    if (size !== JQR_SIZE) {
+      lines.push('');
+      lines.push('→ 文件大小不符，可能是：路径不对、复制不完整、或文件被改动。');
+      lines.push('  可点「下载扫码组件」自动获取。');
+      setLog(lines.join('\n'), true);
+      return;
+    }
+
+    // 3) sha256 校验
+    const hv = await sh(`sha256sum ${JQR_PATH} 2>/dev/null | cut -d' ' -f1`, 25000);
+    const got = (hv || '').trim().toLowerCase();
+    lines.push(`${ok(got === JQR_SHA)} sha256 校验: ${got.slice(0, 16)}…`);
+    if (got !== JQR_SHA) {
+      lines.push(`   期望: ${JQR_SHA.slice(0, 16)}…`);
+      lines.push('→ 文件内容与预期不符，建议「重新下载」。');
+    }
+
+    // 4) shell 能否完整读取（这是最常见的问题：单行过大被截断）
+    const b64Raw = await sh(`base64 -w 76 ${JQR_PATH} 2>/dev/null`, 45000);
+    const b64Len = ((b64Raw || '').replace(/[^A-Za-z0-9+/=]/g, '')).length;
+    const expectB64 = 342516;
+    lines.push(`${ok(b64Len >= expectB64 - 8)} shell 读取: ${b64Len} / ${expectB64} 字符`);
+    if (b64Len < expectB64 - 8) {
+      lines.push('→ 读取被截断（宿主对 shell 输出有长度限制）。');
+      lines.push('  「扫码」会失败。请告知，我改用分块读取。');
+    }
+
+    // 5) 注入 + 实际解码能力
+    let injected = false, selfTestOk = false, selfTestMsg = '';
+    if (b64Len >= expectB64 - 8) {
+      injected = await jqrLoadLocal();
+      lines.push(`${ok(injected)} 注入到页面: ${injected ? '成功' : '失败'}`);
+      if (injected) {
+        // 造一张 21x21 的测试二维码不做，只验证函数可调用
+        try {
+          const cv = document.createElement('canvas');
+          cv.width = cv.height = 100;
+          const cx = cv.getContext('2d');
+          cx.fillStyle = '#fff'; cx.fillRect(0, 0, 100, 100);
+          const img = cx.getImageData(0, 0, 100, 100);
+          // 对纯白图调用一次，确认不抛异常（必然识别不出内容，属正常）
+          window.jsQR(img.data, 100, 100, { inversionAttempts: 'dontInvert' });
+          selfTestOk = true;
+          selfTestMsg = 'jsQR 可正常调用';
+        } catch (e) {
+          selfTestMsg = 'jsQR 调用异常: ' + (e && e.message ? e.message : e);
+        }
+        lines.push(`${ok(selfTestOk)} 解码器可用性: ${selfTestMsg}`);
+      }
+    } else {
+      lines.push('⏭ 跳过注入检测（读取不完整）');
+    }
+
+    lines.push('');
+    const allOk = size === JQR_SIZE && got === JQR_SHA
+      && b64Len >= expectB64 - 8 && injected;
+    lines.push(allOk ? '✅ 全部通过 —— 扫码功能应可正常使用'
+                     : '❌ 存在问题，见上方 ❌ 项');
+    setLog(lines.join('\n'), !allOk);
+    toast(allOk ? '检测通过' : '检测发现问题', allOk ? 'green' : 'red');
   };
 
   /** 更新界面上的组件状态文案与按钮态 */
@@ -378,13 +616,12 @@
 
     if (exists) {
       const v = await jqrVerify();
-      // 同步记录（来自设备端 merge 结果）提供来源与时间；缺失则视为手动放置
-      const meta = (syncDoc.keys && syncDoc.keys['jsQR']) || null;
+      // 来源与时间取自同步记录（设备端 merge 结果）；无记录则视为手动放置
+      const meta = syncDoc.keys['jsQR'];
       let tip = '（手动放置）';
       if (meta && meta.t) {
         const d = new Date(meta.t).toISOString().slice(0, 10);
-        const how = meta.source ? '下载' : '手动放置';
-        tip = `（${d} · ${how}）`;
+        tip = `（${d} · ${meta.source ? '下载' : '手动放置'}）`;
       }
       st.innerHTML = v.ok
         ? `<span style="color:#7ee2a8;">已安装 ✓</span> <span style="color:rgba(255,255,255,.35);">${size}B ${tip}</span>`
@@ -1153,8 +1390,7 @@
     // 探测扫码组件状态；已安装则静默注入，使「扫码」即点即用
     (async () => {
       try {
-        // 先拉取设备端同步文档（多端共享同一份状态），再渲染
-        await pullDevice();
+        await pullDevice();          // 先与设备端同步（多端共享同一份状态）
         await renderScanState();
         if (await jqrInstalled()) await jqrLoadLocal();
       } catch (e) { /* 面板仍可用，忽略 */ }
