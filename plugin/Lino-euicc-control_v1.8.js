@@ -88,14 +88,23 @@
       + 'z-index:99999;display:flex;align-items:center;justify-content:center;padding:18px;';
 
     const panel = document.createElement('div');
-    panel.style.cssText = 'max-width:420px;width:100%;box-sizing:border-box;'
+    // html 模式放宽宽度并允许纵向滚动（使用说明较长）
+    const maxW = opts.width || (opts.html ? '560px' : '420px');
+    panel.style.cssText = 'max-width:' + maxW + ';width:100%;box-sizing:border-box;'
+      + 'max-height:82vh;overflow-y:auto;'
       + 'background:rgba(20,28,38,.98);border:1px solid rgba(255,255,255,.14);'
       + 'border-radius:14px;padding:18px 20px;color:#c8d6e5;'
       + 'font-size:.82rem;line-height:1.6;box-shadow:0 18px 50px rgba(0,0,0,.75);';
 
     const msg = document.createElement('div');
-    msg.style.cssText = 'white-space:pre-wrap;word-break:break-all;margin-bottom:12px;';
-    msg.innerHTML = _esc(opts.message);
+    if (opts.html) {
+      // 允许富文本与链接；内容由本插件自己生成，不含外部输入
+      msg.style.cssText = 'word-break:break-word;margin-bottom:12px;';
+      msg.innerHTML = opts.message;
+    } else {
+      msg.style.cssText = 'white-space:pre-wrap;word-break:break-all;margin-bottom:12px;';
+      msg.innerHTML = _esc(opts.message);
+    }
     panel.appendChild(msg);
 
     let input = null;
@@ -138,11 +147,70 @@
       setTimeout(() => { try { input.focus(); input.select(); } catch (e) {} }, 60);
     }
 
-    row.appendChild(cancelBtn);
+    if (opts.showCancel !== false) row.appendChild(cancelBtn);
     row.appendChild(okBtn);
     panel.appendChild(row);
     ov.appendChild(panel);
     document.body.appendChild(ov);
+  });
+
+  /**
+   * 信息展示弹层（富文本）。仅一个「知道了」按钮，点任意处关闭。
+   * 用于「使用说明」这类纯阅读内容。
+   */
+  // ---------- 使用说明 ----------
+  const REPO_URL = 'https://github.com/linote99/lino-euicc-control';
+
+  /**
+   * 使用说明弹层（含仓库链接）。
+   *
+   * 用 uiInfo 自建富文本弹层，而非 window.alert ——
+   * 本环境 WebView 未设置 WebChromeClient，alert/confirm/prompt 均无界面。
+   */
+  const showHelp = () => {
+    const link = 'color:#7fb3ff;text-decoration:underline;word-break:break-all;';
+    const sec = 'margin:14px 0 6px;font-weight:600;color:#e8f0fa;font-size:.84rem;';
+    const li = 'margin:3px 0 3px 2px;';
+    const html = ''
+      + '<div style="font-size:.95rem;font-weight:600;color:#e8f0fa;margin-bottom:4px;">'
+      +   '\ud83d\udcf6 eSIM 配置管理 \u00b7 使用说明</div>'
+      + '<div style="font-size:.75rem;color:rgba(255,255,255,.45);margin-bottom:10px;">'
+      +   '配合 Magisk 模块 Lino euicc control 使用</div>'
+      + '<div style="' + sec + '">能做什么</div>'
+      + '<div style="' + li + '">\u00b7 <b>查看配置</b>：卡内所有 eSIM 配置的昵称、提供方、ICCID 与启用状态</div>'
+      + '<div style="' + li + '">\u00b7 <b>启用 / 禁用</b>：切换当前使用的配置（禁用会断网，属卡片行为）</div>'
+      + '<div style="' + li + '">\u00b7 <b>改名</b>：给配置起个自己认得出的名字，留空即清除</div>'
+      + '<div style="' + li + '">\u00b7 <b>下载配置</b>：粘贴激活码或扫码，直接下载并安装（无需手动操作）</div>'
+      + '<div style="' + li + '">\u00b7 <b>删除配置</b>：需手动输入该配置的 ICCID 二次确认</div>'
+      + '<div style="' + li + '">\u00b7 <b>卡槽识别</b>：双卡时显示选择器，指明操作哪一张</div>'
+      + '<div style="' + sec + '">首次使用</div>'
+      + '<div style="' + li + '">1. 先刷入 Magisk 模块并<b>重启</b>（提供特权能力）</div>'
+      + '<div style="' + li + '">2. 把插件文件拖入 UFI-TOOLS（无需重启）</div>'
+      + '<div style="' + li + '">3. 需要扫码时点「下载扫码组件」（约 251 KB，只下一次）</div>'
+      + '<div style="margin-top:6px;font-size:.75rem;color:rgba(255,255,255,.5);">'
+      +   '未刷模块时，插件能打开但读取配置会失败。</div>'
+      + '<div style="' + sec + '">常见问题</div>'
+      + '<div style="' + li + '">\u00b7 <b>扫码点不动</b>：先点「下载扫码组件」；仍不行点「检测」看哪一步失败</div>'
+      + '<div style="' + li + '">\u00b7 <b>改名 / 删除没反应</b>：需模块 v2.9 起（修复了 lpac 初始化问题）</div>'
+      + '<div style="' + li + '">\u00b7 <b>下载报错</b>：确认模块已刷入并重启；激活码需为 lpa:1$ 开头</div>'
+      + '<div style="' + li + '">\u00b7 <b>切换后网络短暂中断</b>：卡片刷新配置的正常行为，稍等即恢复</div>'
+      + '<div style="' + sec + '">注意</div>'
+      + '<div style="' + li + '">\u00b7 <b>删除配置不可逆</b>，操作前请确认 ICCID</div>'
+      + '<div style="' + li + '">\u00b7 需要 root（Magisk）与 UFI-TOOLS 高级功能（root shell）</div>'
+      + '<div style="margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,.1);">'
+      +   '<div style="font-size:.75rem;color:rgba(255,255,255,.5);margin-bottom:6px;">'
+      +     '源码、版本历史与最新下载：</div>'
+      +   '<a href="' + REPO_URL + '" target="_blank" rel="noopener" style="' + link + '">'
+      +     REPO_URL + '</a></div>';
+    uiInfo(html);
+  };
+
+  const uiInfo = (html, okText = '知道了') => _modal({
+    message: html,
+    html: true,
+    okText,
+    showCancel: false,
+    width: '580px',
   });
 
   /** 文本输入弹层；返回输入值，取消返回 null */
@@ -763,6 +831,7 @@
     <div class="title" style="margin:6px 0; display:flex; justify-content:space-between; align-items:center;">
       <div style="display:flex; align-items:center; gap:8px;">
         <strong style="color:var(--dark-text-color,#fff); font-size:14px;">📶 eSIM 配置管理</strong>
+        <button id="lino_help" style="background:rgba(120,170,255,.18);border:1px solid rgba(120,170,255,.45);color:#a8c8ff;border-radius:6px;font-size:11px;padding:2px 9px;cursor:pointer;">使用说明</button>
         <div id="lino_euicc_toggle_wrap"><button id="${TOGGLE}">展开</button></div>
       </div>
     </div>
@@ -1343,6 +1412,7 @@
       };
     }
     const on = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
+    on('lino_help', () => showHelp());
     on('lino_refresh', () => refresh());
     on('lino_scan', () => doScan());
     on('lino_jqr_test', async () => {
