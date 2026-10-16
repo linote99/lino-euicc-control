@@ -1,0 +1,6 @@
+id=kano-euicc-ctl
+name=Lino euicc control
+version=2.8
+versionCode=19
+author=Lino
+description=一体化 eSIM 模块：KanoEuiccCtl（配合 ufitools 插件，OMAPI+ES10c 直连 eUICC，提供 profile 查询/启用/禁用/删除/改名/双卡槽位选择）+ OpenEUICC（系统 EuiccService/LPA，下载经 lpac 实现(无 UI, ES9+ 全通)）。含 eUICC 特性声明与四大权限白名单，开机自动配置后台白名单。卸载即恢复原状。
