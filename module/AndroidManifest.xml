@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="kano.euiccctl">
+
+    <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="33" />
+
+    <uses-permission android:name="android.permission.WRITE_EMBEDDED_SUBSCRIPTIONS" />
+    <uses-permission android:name="android.permission.SECURE_ELEMENT_PRIVILEGED_OPERATION" />
+    <uses-permission android:name="android.permission.READ_PRIVILEGED_PHONE_STATE" />
+    <uses-permission android:name="android.permission.MODIFY_PHONE_STATE" />
+    <!-- lpac 需访问 SM-DP+ 完成 ES9+ 下载 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="KanoEuiccCtl"
+        android:allowBackup="false"
+        android:hasCode="true">
+
+        <service
+            android:name=".CtlService"
+            android:exported="true"
+            android:process=":ctl" />
+    </application>
+</manifest>
