@@ -218,8 +218,22 @@
   /** 读取设备上的组件并注入（不联网） */
   const jqrLoadLocal = async () => {
     if (jqrLoaded && typeof window.jsQR === 'function') return true;
-    const r = await sh(`base64 -w0 ${JQR_PATH} 2>/dev/null`, 40000);
-    const b64 = (r.content || '').replace(/[^A-Za-z0-9+/=]/g, '');
+
+    // 必须用 base64 -w 76（带换行的 base64），不能用 -w0。
+    //
+    // 原因：UFI-TOOLS 的 RootShell.sendCommandToSocket() 是逐行读取的
+    //   （Kotlin BufferedReader.readLine()），且对每行调用 KanoLog.d() 打日志。
+    //   若输出是单行 342KB（base64 -w0），该行会被日志/读取链路截断，
+    //   返回的 base64 不完整，解码后注入必然失败。
+    //   改成每行 76 字符后，逐行读取与日志都能正常处理。
+    const r = await sh(`base64 -w 76 ${JQR_PATH} 2>/dev/null`, 40000);
+    const b64 = ((r && r.content) || '').replace(/[^A-Za-z0-9+/=]/g, '');
+    // 完整长度 342516。偏小说明仍被截断（宿主限制），明确报出来而不是静默失败。
+    if (b64.length < 300000) {
+      setLog('扫码组件读取不完整：收到 ' + b64.length + ' 字符（完整应为 342516）。'
+        + '\n请改用「下载扫码组件」按钮获取。', true);
+      return false;
+    }
     if (b64.length < 1000) return false;
     let code;
     try { code = decodeURIComponent(escape(atob(b64))); }
