@@ -1,0 +1,22 @@
+#!/sbin/sh
+umask 022
+OUTFD=$2
+ZIPFILE=$3
+
+ui_print() { echo "$1"; }
+
+mount /data 2>/dev/null
+[ -f /data/adb/magisk/util_functions.sh ] || { ui_print "需要 Magisk v20.4+"; exit 1; }
+. /data/adb/magisk/util_functions.sh
+
+ui_print "*******************************"
+ui_print " Kano eUICC Control "
+ui_print "*******************************"
+
+SKIPMOUNT=false
+PROPFILE=false
+POSTFSDATA=false
+LATESTARTSERVICE=false
+
+install_module
+ui_print "安装完成，重启生效"

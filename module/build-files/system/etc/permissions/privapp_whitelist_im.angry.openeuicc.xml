@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<permissions>
+<privapp-permissions package="im.angry.openeuicc">
+<permission name="android.permission.MODIFY_PHONE_STATE"/>
+<permission name="android.permission.READ_PRIVILEGED_PHONE_STATE"/>
+<permission name="android.permission.WRITE_EMBEDDED_SUBSCRIPTIONS"/>
+<permission name="android.permission.SECURE_ELEMENT_PRIVILEGED_OPERATION"/>
+<permission name="android.permission.POST_NOTIFICATIONS"/>
+<permission name="android.permission.READ_PHONE_STATE"/>
+<permission name="android.permission.INTERNET"/>
+<permission name="android.permission.FOREGROUND_SERVICE"/>
+<permission name="android.permission.WAKE_LOCK"/>
+<permission name="im.angry.openeuicc.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"/>
+<permission name="android.permission.CAMERA"/>
+<feature name="android.hardware.telephony"/>
+<feature name="android.hardware.camera"/>
+<feature name="android.hardware.camera.front"/>
+<feature name="android.hardware.camera.autofocus"/>
+<feature name="android.hardware.camera.flash"/>
+<feature name="android.hardware.screen.landscape"/>
+<feature name="android.hardware.wifi"/>
+</privapp-permissions>
+</permissions>
