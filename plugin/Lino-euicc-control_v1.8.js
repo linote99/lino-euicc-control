@@ -170,28 +170,95 @@
    *   —— 放在 /sdcard 下便于用户手动替换（设备无法直连 GitHub 时）。
    *   下载后校验 sha256，不匹配则删除并报错，不加载可疑文件。
    */
+  const PLUGIN_VERSION = '1.8';
   const JQR_DIR  = '/sdcard/ufitools/lib';
   const JQR_PATH = JQR_DIR + '/jsQR.min.js';
   const JQR_SHA  = 'bc40c8a15196236b2314db0856f72ca0b49980cd5413b8c852a7349f5fee0859';
   const JQR_SIZE = 256885;
+  const JQR_VER  = 'jsQR 1.4.0';
+  /**
+   * 下载源（按可靠性排序，逐个尝试，全部校验 sha256）。
+   *
+   * 选源依据：在设备上实测每个源下载后比对 sha256，结果：
+   *   GitHub Release        256885 ✅   jsDelivr(cdn/gcore/testingcf/fastly) 256885 ✅
+   *   ghproxy.net 镜像      256885 ✅   unpkg(jsqr@1.4.0)                    256885 ✅
+   *   raw.githubusercontent 32768  ❌   staticaly                           32768  ❌
+   * 后两者返回 HTTP 200 但**内容被截断**（仅 32 KB），属静默损坏，故不采用。
+   * jsDelivr 用固定 tag（@assets-v1）而非分支名，避免上游改动导致校验失败。
+   */
   const JQR_URLS = [
+    'https://cdn.jsdelivr.net/gh/linote99/lino-euicc-control@assets-v1/third_party/jsQR.min.js',
+    'https://fastly.jsdelivr.net/gh/linote99/lino-euicc-control@assets-v1/third_party/jsQR.min.js',
+    'https://gcore.jsdelivr.net/gh/linote99/lino-euicc-control@assets-v1/third_party/jsQR.min.js',
     'https://github.com/linote99/lino-euicc-control/releases/download/assets-v1/jsQR.min.js',
-    'https://raw.githubusercontent.com/linote99/lino-euicc-control/main/third_party/jsQR.min.js',
+    'https://ghproxy.net/https://raw.githubusercontent.com/linote99/lino-euicc-control/main/third_party/jsQR.min.js',
   ];
 
   let jqrLoaded = false;
 
+  // ---------- 安装状态记录（落盘，便于多端同步与排障）----------
+  /**
+   * 在 /sdcard/ufitools/ 下维护一份状态文件。
+   *
+   * 用途：
+   *   1) 记录组件的安装事实（版本、大小、sha256、来源、时间），
+   *      换端/换浏览器打开时能直接读到状态，不必每次重新探测大文件
+   *   2) 排障依据：能看出「什么时候、从哪个源、装了哪个版本」
+   *
+   * 位置选在 /sdcard/ufitools/ 而非应用私有目录：
+   *   /sdcard 是外部存储，各端与用户都可访问，便于跨端同步与手动检查。
+   * 注意：状态文件只作记录，**组件的真实存在性仍以实际文件为准**
+   *   （用户可能手动删除组件而未更新状态），故渲染时以文件探测结果为准，
+   *   状态文件用于补充「来源/时间」等信息。
+   */
+  const JQR_STATE = '/sdcard/ufitools/euicc-scan.json';
+
+  const stateRead = async () => {
+    const t = await sh(`cat ${JQR_STATE} 2>/dev/null`, 12000);
+    if (!t) return null;
+    try { return JSON.parse(t); } catch (e) { return null; }
+  };
+
+  const stateWrite = async (obj) => {
+    try {
+      const json = JSON.stringify(obj);
+      // 用单引号包裹并转义，避免 JSON 里的双引号被 shell 解析
+      const safe = json.replace(/'/g, "'\\''");
+      await sh(`mkdir -p ${JQR_DIR} && printf '%s' '${safe}' > ${JQR_STATE}`, 15000);
+      return true;
+    } catch (e) { return false; }
+  };
+
+  const stateClear = async () => {
+    await sh(`rm -f ${JQR_STATE}`, 10000);
+  };
+
+  /** 记录一次安装 */
+  const stateMarkInstalled = async (source) => {
+    await stateWrite({
+      component: 'jsQR',
+      version: JQR_VER,
+      size: JQR_SIZE,
+      sha256: JQR_SHA,
+      source: source || '(手动放置)',
+      installedAt: new Date().toISOString(),
+      pluginVersion: PLUGIN_VERSION,
+    });
+  };
+
+
   /** 组件是否已就位（只读探测，不做网络请求） */
+  /** 组件是否已安装（只看文件存在且大小合理；内容校验由 jqrVerify 负责） */
   const jqrInstalled = async () => {
     const r = await sh(`[ -f ${JQR_PATH} ] && wc -c < ${JQR_PATH} || echo 0`, 10000);
-    const n = parseInt((r.content || '0').trim(), 10);
+    const n = parseInt((r || '0').trim(), 10);
     return Number.isFinite(n) && n > 1000;
   };
 
   /** 校验已安装组件的 sha256；返回 ok/实际值/期望值 */
   const jqrVerify = async () => {
     const r = await sh(`sha256sum ${JQR_PATH} 2>/dev/null | cut -d' ' -f1`, 20000);
-    const got = (r.content || '').trim().toLowerCase();
+    const got = (r || '').trim().toLowerCase();
     return { ok: got === JQR_SHA, got, want: JQR_SHA };
   };
 
@@ -227,7 +294,7 @@
     //   返回的 base64 不完整，解码后注入必然失败。
     //   改成每行 76 字符后，逐行读取与日志都能正常处理。
     const r = await sh(`base64 -w 76 ${JQR_PATH} 2>/dev/null`, 40000);
-    const b64 = ((r && r.content) || '').replace(/[^A-Za-z0-9+/=]/g, '');
+    const b64 = (r || '').replace(/[^A-Za-z0-9+/=]/g, '');
     // 完整长度 342516。偏小说明仍被截断（宿主限制），明确报出来而不是静默失败。
     if (b64.length < 300000) {
       setLog('扫码组件读取不完整：收到 ' + b64.length + ' 字符（完整应为 342516）。'
@@ -254,18 +321,19 @@
       const tmp = JQR_PATH + '.part';
       const r = await sh(
         `${curl} -s -L --max-time 90 -o ${tmp} -w '%{http_code}' ${url}`, 110000);
-      const code = (r.content || '').trim().slice(-3);
+      const code = (r || '').trim().slice(-3);
       if (code !== '200') { lastErr = `HTTP ${code || '失败'} (${url.split('/')[2]})`; continue; }
 
       // 校验大小与 sha256
       const sz = await sh(`wc -c < ${tmp}`, 10000);
-      const n = parseInt((sz.content || '0').trim(), 10);
+      const n = parseInt((sz || '0').trim(), 10);
       if (n !== JQR_SIZE) { lastErr = `大小不符 ${n}/${JQR_SIZE}`; await sh(`rm -f ${tmp}`, 8000); continue; }
       const hv = await sh(`sha256sum ${tmp} | cut -d' ' -f1`, 20000);
-      const got = (hv.content || '').trim().toLowerCase();
+      const got = (hv || '').trim().toLowerCase();
       if (got !== JQR_SHA) { lastErr = `sha256 不符 ${got.slice(0,12)}…`; await sh(`rm -f ${tmp}`, 8000); continue; }
 
       await sh(`mv ${tmp} ${JQR_PATH} && chmod 644 ${JQR_PATH}`, 15000);
+      await stateMarkInstalled(url);       // 记录安装来源与时间（供多端同步/排障）
       jqrLoaded = false;
       const ok = await jqrLoadLocal();
       setLog(ok ? '扫码组件已下载并加载。' : '组件已下载，但注入失败。', !ok);
@@ -286,12 +354,100 @@
       + JQR_PATH + '\n卸载后「扫码」功能将不可用，其余功能不受影响。', '卸载');
     if (!typed) { setLog('已取消卸载。', false); return; }
     await sh(`rm -f ${JQR_PATH}`, 15000);
+    await stateClear();
     jqrLoaded = false;
     try { delete window.jsQR; } catch (e) { window.jsQR = undefined; }
     if (await jqrInstalled()) { setLog('卸载失败，请检查文件权限。', true); toast('卸载失败', 'red'); return; }
     setLog('扫码组件已卸载。', false);
     toast('已卸载', 'green');
     renderScanState();
+  };
+
+  /**
+   * 组件检测：把每一步的实测结果直接展示出来。
+   *
+   * 排查「放了文件却用不了」时，需要知道卡在哪一步 —— 是文件不在、
+   * 校验不过、shell 读不到、还是注入失败。逐项报告，不猜。
+   */
+  const jqrDiagnose = async () => {
+    const lines = [];
+    const ok = (b) => b ? '✅' : '❌';
+
+    // 1) 宿主能力：runShellWithRoot 是否存在
+    const hasShell = (typeof runShellWithRoot === 'function');
+    lines.push(`${ok(hasShell)} root shell 可用: ${hasShell ? '是' : '否（请开启高级功能）'}`);
+    if (!hasShell) { setLog(lines.join('\n'), true); return; }
+
+    // 2) 文件是否存在 + 大小
+    const szRaw = await sh(`[ -f ${JQR_PATH} ] && wc -c < ${JQR_PATH} || echo 0`, 15000);
+    const size = parseInt((szRaw || '0').trim(), 10);
+    lines.push(`${ok(size === JQR_SIZE)} 文件存在: ${JQR_PATH}`);
+    lines.push(`   实测大小 ${size} / 期望 ${JQR_SIZE} 字节`);
+
+    // 目录信息（文件不存在时帮助定位路径问题）
+    const lsOut = await sh(`ls -la ${JQR_DIR}/ 2>&1 | head -5`, 15000);
+    lines.push(`   目录内容: ${(lsOut || '(空)').replace(/\n/g, ' | ')}`);
+
+    if (size !== JQR_SIZE) {
+      lines.push('');
+      lines.push('→ 文件大小不符，可能是：路径不对、复制不完整、或文件被改动。');
+      lines.push('  可点「下载扫码组件」自动获取。');
+      setLog(lines.join('\n'), true);
+      return;
+    }
+
+    // 3) sha256 校验
+    const hv = await sh(`sha256sum ${JQR_PATH} 2>/dev/null | cut -d' ' -f1`, 25000);
+    const got = (hv || '').trim().toLowerCase();
+    lines.push(`${ok(got === JQR_SHA)} sha256 校验: ${got.slice(0, 16)}…`);
+    if (got !== JQR_SHA) {
+      lines.push(`   期望: ${JQR_SHA.slice(0, 16)}…`);
+      lines.push('→ 文件内容与预期不符，建议「重新下载」。');
+    }
+
+    // 4) shell 能否完整读取（这是最常见的问题：单行过大被截断）
+    const b64Raw = await sh(`base64 -w 76 ${JQR_PATH} 2>/dev/null`, 45000);
+    const b64Len = ((b64Raw || '').replace(/[^A-Za-z0-9+/=]/g, '')).length;
+    const expectB64 = 342516;
+    lines.push(`${ok(b64Len >= expectB64 - 8)} shell 读取: ${b64Len} / ${expectB64} 字符`);
+    if (b64Len < expectB64 - 8) {
+      lines.push('→ 读取被截断（宿主对 shell 输出有长度限制）。');
+      lines.push('  「扫码」会失败。请告知，我改用分块读取。');
+    }
+
+    // 5) 注入 + 实际解码能力
+    let injected = false, selfTestOk = false, selfTestMsg = '';
+    if (b64Len >= expectB64 - 8) {
+      injected = await jqrLoadLocal();
+      lines.push(`${ok(injected)} 注入到页面: ${injected ? '成功' : '失败'}`);
+      if (injected) {
+        // 造一张 21x21 的测试二维码不做，只验证函数可调用
+        try {
+          const cv = document.createElement('canvas');
+          cv.width = cv.height = 100;
+          const cx = cv.getContext('2d');
+          cx.fillStyle = '#fff'; cx.fillRect(0, 0, 100, 100);
+          const img = cx.getImageData(0, 0, 100, 100);
+          // 对纯白图调用一次，确认不抛异常（必然识别不出内容，属正常）
+          window.jsQR(img.data, 100, 100, { inversionAttempts: 'dontInvert' });
+          selfTestOk = true;
+          selfTestMsg = 'jsQR 可正常调用';
+        } catch (e) {
+          selfTestMsg = 'jsQR 调用异常: ' + (e && e.message ? e.message : e);
+        }
+        lines.push(`${ok(selfTestOk)} 解码器可用性: ${selfTestMsg}`);
+      }
+    } else {
+      lines.push('⏭ 跳过注入检测（读取不完整）');
+    }
+
+    lines.push('');
+    const allOk = size === JQR_SIZE && got === JQR_SHA
+      && b64Len >= expectB64 - 8 && injected;
+    lines.push(allOk ? '✅ 全部通过 —— 扫码功能应可正常使用'
+                     : '❌ 存在问题，见上方 ❌ 项');
+    setLog(lines.join('\n'), !allOk);
+    toast(allOk ? '检测通过' : '检测发现问题', allOk ? 'green' : 'red');
   };
 
   /** 更新界面上的组件状态文案与按钮态 */
@@ -301,12 +457,27 @@
     const btnRm = document.getElementById('lino_jqr_rm');
     const btnScan = document.getElementById('lino_scan');
     if (!st || !btnDl || !btnRm) return;
-    const has = await jqrInstalled();
-    if (has) {
+
+    // 判定「已安装」的条件：文件存在且大小合理。
+    // 不再依赖 sha256 通过才显示已安装 —— 用户手动放置的文件可能来自
+    // 其他渠道，大小对就应视为已安装（校验结果单独提示，不否决安装状态）。
+    const szRaw = await sh(`[ -f ${JQR_PATH} ] && wc -c < ${JQR_PATH} || echo 0`, 12000);
+    const size = parseInt((szRaw || '0').trim(), 10);
+    const exists = Number.isFinite(size) && size > 1000;
+
+    if (exists) {
       const v = await jqrVerify();
+      const meta = await stateRead();
+      let tip = '';
+      if (meta && meta.installedAt) {
+        const d = String(meta.installedAt).slice(0, 10);
+        tip = `（${d} 由${meta.source === '(手动放置)' ? '手动放置' : '下载'}）`;
+      } else {
+        tip = '（手动放置）';
+      }
       st.innerHTML = v.ok
-        ? '<span style="color:#7ee2a8;">已安装 ✓</span>'
-        : '<span style="color:#ff9b9b;">已安装但校验不通过</span>';
+        ? `<span style="color:#7ee2a8;">已安装 ✓</span> <span style="color:rgba(255,255,255,.35);">${size}B ${tip}</span>`
+        : `<span style="color:#ffb060;">已安装（校验不同）</span> <span style="color:rgba(255,255,255,.35);">${size}B ${tip}</span>`;
       btnDl.textContent = '重新下载';
       btnRm.style.display = '';
       if (btnScan) btnScan.disabled = false;
@@ -514,6 +685,7 @@
               扫码组件 jsQR：<span id="lino_jqr_state">检测中…</span>
             </span>
             <span style="display:flex;gap:6px;flex-shrink:0;">
+              <button class="acc-btn" id="lino_jqr_test">检测</button>
               <button class="acc-btn" id="lino_jqr_dl">下载扫码组件</button>
               <button class="acc-btn danger" id="lino_jqr_rm" style="display:none;">卸载</button>
             </span>
@@ -915,7 +1087,7 @@
     if (typeof window.jsQR !== 'function') {
       const ok = await jqrLoadLocal();
       if (!ok) {
-        setLog('扫码组件存在但加载失败，可尝试「重新下载」。', true);
+        setLog('扫码组件存在但未能加载。\n可点「检测」查看具体卡在哪一步，或「重新下载」。', true);
         toast('组件加载失败', 'red');
         return;
       }
@@ -1025,6 +1197,14 @@
     const on = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
     on('lino_refresh', () => refresh());
     on('lino_scan', () => doScan());
+    on('lino_jqr_test', async () => {
+      const btn = document.getElementById('lino_jqr_test');
+      if (btn) btn.disabled = true;
+      setLog('正在检测扫码组件…', false);
+      try { await jqrDiagnose(); } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
     on('lino_jqr_dl', async () => {
       const btn = document.getElementById('lino_jqr_dl');
       if (btn) btn.disabled = true;
