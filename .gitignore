@@ -1,0 +1,13 @@
+# 构建产物
+build/
+*.idsig
+*.keystore
+*.jks
+
+# APK 签名中间物
+*.apk.idsig
+
+# 编辑器/系统
+.DS_Store
+Thumbs.db
+*.swp
