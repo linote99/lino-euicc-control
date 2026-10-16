@@ -6,6 +6,12 @@
 `liblpac-jni.so` 完成 ES9+ 下载。全部操作经 root shell 下发，**不做 UI 自动化**，
 不受屏幕旋转/锁屏影响。
 
+<p align="center">
+  <img src="docs/images/plugin-ui.jpg" width="360" alt="插件界面预览">
+</p>
+
+<p align="center"><i>插件界面：卡槽与运营商、配置数量、当前启用项、卡片可访问性；每个配置支持启用/禁用、改名、删除；底部为扫码或粘贴激活码后一键下载。</i></p>
+
 ## 功能
 
 | 功能 | 实现通道 | 状态 |
