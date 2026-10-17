@@ -34,6 +34,7 @@
   const state = {
     busy: false, eid: '', profiles: [], slot: {}, lastRaw: '',
     euiiccSlots: [],      // 各槽是否为可用 eUICC，如 [false, true]
+    subs: [],             // 各槽订阅信息（含 ICCID/运营商/是否嵌入式）
     selectedSlot: -1,     // 当前操作的目标槽位；-1 = 自动
   };
 
@@ -737,7 +738,7 @@
 
   // ---------- 结果解析 ----------
   const parse = (raw) => {
-    const out = { error: '', kv: {}, profiles: [], lines: [], logs: [] };
+    const out = { error: '', kv: {}, profiles: [], lines: [], logs: [], subs: [] };
     if (!raw) { out.error = '空结果'; return out; }
     for (const ln of raw.split('\n')) {
       const line = ln.trim();
@@ -755,15 +756,18 @@
         out.profiles.push(p);
         continue;
       }
-      // SUB_SLOT=1;ICCID=xxx;EMBEDDED=false;CARRIER=yyy  —— 复合行，需拆段
+      // SUB_SLOT=1;ICCID=xxx;EMBEDDED=false;CARRIER=yyy  —— 复合行，可能有多行（双卡）
       if (line.startsWith('SUB_SLOT=')) {
         const body = line.slice(9);
         const parts = body.split(';');
-        out.kv.SUB_SLOT = parts[0].trim();
+        const item = { slot: parts[0].trim() };
         for (const seg of parts.slice(1)) {
           const j = seg.indexOf('=');
-          if (j > 0) out.kv['SUB_' + seg.slice(0, j).trim()] = seg.slice(j + 1).trim();
+          if (j > 0) item[seg.slice(0, j).trim()] = seg.slice(j + 1).trim();
         }
+        out.subs.push(item);
+        // 兼容旧字段：取第一条
+        if (out.kv.SUB_SLOT === undefined) out.kv.SUB_SLOT = item.slot;
         continue;
       }
       // SLOT_EUICC_0=true 之类，走通用 KV 即可（键名已含索引）
@@ -936,24 +940,36 @@
     const activeEl = document.getElementById('lino_active');
     const countEl = document.getElementById('lino_count');
 
-    // 卡槽：优先用 APK 的 SUB_SLOT（订阅所在物理槽），回退到 gsm.sim.state 推断
+    // 卡槽显示：统一用「卡槽N」（1-based），不暴露 0/1 索引与 SIM1/SIM2 这类内部名。
+    // 数据来源：APK 的 SUB_SLOT 行（每槽一条），取当前操作目标槽对应的那条。
+    const subs = state.subs || [];
+    const targetSlot = state.selectedSlot;
+    let cur = null;
+    if (targetSlot >= 0) {
+      cur = subs.find((x) => Number(x.slot) === targetSlot) || null;
+    } else if (subs.length) {
+      cur = subs[0];
+    }
+
     let slotTxt = '未知';
     let slotDetail = '';
-    const sub = state.slot.SUB_SLOT;
-    if (sub !== undefined && sub !== '') {
-      slotTxt = `槽 ${sub}`;
+    if (cur) {
+      const n = Number(cur.slot);
+      slotTxt = '卡槽' + (Number.isFinite(n) ? (n + 1) : '?');
+      // 双卡时标注当前看的是哪一张，避免误改
+      if (subs.length > 1) slotTxt += `（共 ${subs.length} 张）`;
+      slotDetail = cur.CARRIER || '';
+      if (cur.ICCID) {
+        slotDetail += (slotDetail ? ' · ' : '') + '…' + String(cur.ICCID).slice(-6);
+      }
+    } else {
+      // 回退：无订阅信息时按 SIM 状态推断
       const states = state.slot.SIM_STATE;
       if (states) {
         const arr = states.split(',');
-        const st = arr[Number(sub)];
-        if (st) slotTxt += ` (${st})`;
+        const idx = arr.findIndex((x) => x && x !== 'ABSENT');
+        slotTxt = idx >= 0 ? ('卡槽' + (idx + 1)) : '无卡';
       }
-      slotDetail = state.slot.SUB_CARRIER || '';
-    } else if (state.slot.SIM_STATE) {
-      const arr = state.slot.SIM_STATE.split(',');
-      const idx = arr.findIndex((x) => x && x !== 'ABSENT');
-      slotTxt = idx >= 0 ? `槽 ${idx}` : '无卡';
-      slotDetail = idx >= 0 ? '' : '请检查 SIM';
     }
     if (slotEl) slotEl.textContent = slotTxt;
     const health = document.getElementById('lino_slot_hint');
@@ -1057,6 +1073,7 @@
         if (m) slots[Number(m[1])] = sr.kv[k] === 'true';
       });
       state.euiiccSlots = slots;
+      state.subs = sr.subs || [];
       // 若当前选中的槽已无可用 eUICC，回退为自动
       if (state.selectedSlot >= 0 && slots[state.selectedSlot] !== true) state.selectedSlot = -1;
       // gsm.sim.state 作为槽位显示的补充
