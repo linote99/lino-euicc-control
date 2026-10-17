@@ -23,7 +23,7 @@
 | 自定义名称（改名 / 清除） | lpac `es10cSetNickname` | ✅ 实测通过 |
 | 下载并安装配置（无 UI） | lpac ES9+ | ✅ 实测通过 |
 | 扫码填入激活码 | 本地 jsQR 解码（**按需下载**） | ✅ 离线验证通过 |
-| 卡槽识别 / 双卡槽位选择 | OMAPI reader 名映射 | ✅ 单卡实测，双卡逻辑推演 |
+| 卡槽识别 / 双卡槽位选择 | OMAPI reader 名映射 | ✅ 双卡双 eUICC 实测通过 |
 
 ## 目录结构
 
@@ -101,6 +101,43 @@ lpac 以依赖注入方式设计 —— C 库负责 SGP.22 协议，**APDU 与 H
 - ES10c 的 `EnableProfile` 报文里 `refreshFlag(81)` 必须在 `A0` **之外**
 - OMAPI 的 `SEService` 必须 `shutdown()`，否则同进程二次使用报 `null receiver`
 
+## 双卡场景实测记录
+
+在两张 eUICC 同时插入的情况下验证过（此前只有单卡）：
+
+```
+PHONE_COUNT=2
+SUB_SLOT=0;ICCID=89103000000601296086;EMBEDDED=false;CARRIER=中国联通
+SUB_SLOT=1;ICCID=89103000000601264167;EMBEDDED=true;CARRIER=中国联通
+EUICC_ACCESSIBLE=true
+READER=SIM1
+EID=89086035202200000026900007994986
+SLOT_EUICC_0=true
+SLOT_EUICC_1=true
+EUICC_SLOT_COUNT=2
+```
+
+两张卡各自有独立 EID，`--ei slot` 能正确隔离：
+
+| 槽位 | 卡片 | EID | 卡内配置 |
+|---|---|---|---|
+| slot 0 (`SIM1`) | eUICC | `…7994986` | `…96086` Facebookk（启用）、`…99932` 3300361766（禁用） |
+| slot 1 (`SIM2`) | eUICC | `…4370872` | `…64167` kingking99（启用）、`…64068` liulihong9999（禁用） |
+
+**reader 名与槽位的映射**（已实证）：
+
+```
+OMAPI reader 名  SIM1  SIM2     <- N 是 1-based 物理槽号
+simSlotIndex      0     1       <- 0-based
+```
+
+即 `simSlotIndex = reader 名里的数字 - 1`。
+
+**一个容易误判的点**：`dumpsys isub` 中 slot 0 那张卡报
+`isEmbedded=false`、`profileClass=-1`，但它**确实是 eUICC**
+（`cardString` 等于其 EID，APDU 直读也能取到配置）。这是系统/卡片侧的标记问题，
+插件如实反映框架给出的值，不影响功能。
+
 ## 依赖与致谢
 
 - [OpenEUICC](https://github.com/estkme-group/openeuicc) —— 提供 `liblpac-jni.so` 与 LPA 实现
@@ -114,4 +151,8 @@ lpac 以依赖注入方式设计 —— C 库负责 SGP.22 协议，**APDU 与 H
 - **删除配置**不可逆，实际删除操作未在本项目测试中执行过
 - 切换 profile 后系统 `EuiccManager` 缓存可能滞后，导致「下载」短暂报 `isEnabled=false`；
   等待或重启恢复
-- 双卡双 eUICC 场景未经真机验证（测试设备只有一张 eUICC）
+- **双卡槽位默认选第一张**：两槽都是 eUICC 时，不指定槽位会命中 `readers[]`
+  里靠前的那张（实测为 slot 0）。插件在检测到 ≥2 个 eUICC 时会显示「卡槽」选择器，
+  操作前请先确认选中的是哪一张，否则可能改到另一张卡
+- **卡槽位置会变，配置跟卡走**：同一张 eUICC 插到另一个槽，`simSlotIndex` 会随之改变。
+  识别卡片的稳定依据是 **EID**（每张卡唯一），而不是槽位号
