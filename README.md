@@ -103,20 +103,6 @@ lpac 以依赖注入方式设计 —— C 库负责 SGP.22 协议，**APDU 与 H
 
 ## 双卡场景实测记录
 
-在两张 eUICC 同时插入的情况下验证过（此前只有单卡）：
-
-```
-PHONE_COUNT=2
-SUB_SLOT=0;ICCID=89103000000601296086;EMBEDDED=false;CARRIER=中国联通
-SUB_SLOT=1;ICCID=89103000000601264167;EMBEDDED=true;CARRIER=中国联通
-EUICC_ACCESSIBLE=true
-READER=SIM1
-EID=89086035202200000026900007994986
-SLOT_EUICC_0=true
-SLOT_EUICC_1=true
-EUICC_SLOT_COUNT=2
-```
-
 两张卡各自有独立 EID，`--ei slot` 能正确隔离：
 
 | 槽位 | 卡片 | EID | 卡内配置 |
