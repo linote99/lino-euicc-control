@@ -45,13 +45,13 @@ is invalid (cannot get eID or profiles without errors). This slot might be broke
 这是整个分析的关键。在 SE（SecureElement）服务侧日志里，APDU 是**成功**的：
 
 ```
-SecureElementService: openLogicalChannel() AID = a0000005591010ffffffff8900000100  → Success. Channel: 1
+SecureElementService: openLogicalChannel() AID = a0000005591  → Success. Channel: 1
 SecureElement-AccessControlEnforcer: checkCommand() : Access = ALLOWED
-Terminal-SIM2: Sent     : 81e2910006bf3e035c015a          ← ES10c GetEID
-Terminal-SIM2: Received : bf3e125a10890860352022000000269000043708729000   ← 成功返回 EID + 9000
+Terminal-SIM2: Sent     :           ← ES10c GetEID
+Terminal-SIM2:    ← 成功返回 EID + 9000
 ```
 
-**EID 实际读出来了**：`89086035202200000026900004370872`。
+**EID 实际读出来`。
 `9000` 是标准成功状态码，`bf3e125a10...` 正是 ES10c GetEID 的应答结构。
 
 但 App 侧同时报：
